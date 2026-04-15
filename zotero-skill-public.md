@@ -32,7 +32,7 @@ Replace `/path/to/Zotero/` with the actual path to your Zotero data directory
 
 ```python
 import sqlite3
-conn = sqlite3.connect('/path/to/Zotero/zotero.sqlite')
+conn = sqlite3.connect('file:/path/to/Zotero/zotero.sqlite?mode=ro', uri=True)
 ```
 
 **Always query across all libraries unless the user specifies otherwise.**

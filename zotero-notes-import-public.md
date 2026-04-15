@@ -100,7 +100,7 @@ LIVE_DB = '/path/to/Zotero/zotero.sqlite'
 LOCAL_DB = '/tmp/zotero_import_work.sqlite'
 
 shutil.copy2(LIVE_DB, LOCAL_DB)
-conn = sqlite3.connect(LOCAL_DB)
+conn = sqlite3.connect(f'file:{LOCAL_DB}?mode=rwc', uri=True)
 conn.execute("PRAGMA journal_mode=WAL")
 
 # ... do all inserts on conn ...
