@@ -1,64 +1,68 @@
 ---
 name: zotero
-description: >
-  Use this skill whenever the user wants to query, search, or explore their Zotero
-  reference library — or when they need help with citations in their writing. This
-  includes: finding papers in specific collections or group libraries, searching by
-  author/year/topic, verifying whether cited papers actually support the claims they
-  are cited for, finding additional citations relevant to a passage of text, reading
-  PDF content for summaries or quotes, and any other task that involves the Zotero
-  database or its attached PDFs.
-
-  Trigger on phrases like: "find papers on X in my Zotero", "check my citations",
-  "are these references accurate?", "find more citations for this paragraph",
-  "what does [Author Year] actually say?", "search the [collection] library",
-  "is this paper in my Zotero?", "summarise papers about X",
-  "what have I read recently?", "show me my annotations on X", "what did I highlight".
+description: "Use this skill whenever the user wants to query, search, or explore their Zotero reference library — or when they need help with citations in their writing. This includes: finding papers in specific collections or group libraries, searching by author/year/topic, verifying whether cited papers actually support the claims they are cited for, finding additional citations relevant to a passage of text, reading PDF content for summaries or quotes, and any other task that involves the Zotero database or its attached PDFs. Trigger on phrases like: \"find papers on X in my Zotero\", \"check my citations\", \"are these references accurate?\", \"find more citations for this paragraph\", \"what does [Author Year] actually say?\", \"search the [collection] library\", \"summarise papers about X\", \"what have I read recently?\", \"show me my annotations on X\", \"what did I highlight\"."
 ---
 
 # Zotero Skill
 
-This skill gives Claude direct read access to your Zotero SQLite database and PDF
-storage. No Zotero app needs to be running. Adapt the paths and library table below
-to match your own setup.
+> ⚠️ **Runtime: Claude Code only.** This skill runs `uv run litmap …` against `~/LitLake/embeddings.db` on the local machine. It will not work in the Cowork web sandbox. If you reached this skill from the Cowork web frontend, stop and switch to Claude Code.
 
 ## Setup
 
-**Database:** `/path/to/Zotero/zotero.sqlite`
-**PDFs:** `/path/to/Zotero/storage/<itemKey>/<filename>.pdf`
+**Database:** `~/Zotero/zotero.sqlite` (mounted dynamically — use the path resolution snippet below)
+**PDFs:** `<zotero_dir>/storage/<itemKey>/<filename>.pdf`
+**Reference file:** `<zotero_dir>/cowork-zotero-reference.md`
 
-Replace `/path/to/Zotero/` with the actual path to your Zotero data directory
-(e.g. `~/Zotero/` on macOS/Linux, or wherever you've configured it).
+Read the reference file at the start of every session — it contains the schema,
+field IDs, and query patterns so you don't need to rediscover them.
+**Trust the reference file for schema and IDs. Always run live queries for counts
+and collection listings — the reference file counts go stale.**
 
 ```python
-import sqlite3
-conn = sqlite3.connect('file:/path/to/Zotero/zotero.sqlite?mode=ro', uri=True)
+import sqlite3, glob, os
+
+# Resolve Zotero mount path dynamically (session ID changes each run)
+candidates = glob.glob('/sessions/*/mnt/Zotero/zotero.sqlite')
+if candidates:
+    db_path = candidates[0]
+else:
+    db_path = os.path.expanduser('~/Zotero/zotero.sqlite')
+zotero_dir = os.path.dirname(db_path)
+
+conn = sqlite3.connect(db_path)
 ```
 
 **Always query across all libraries unless the user specifies otherwise.**
 
 ## Libraries
 
-Populate this table by running:
+Query the database directly to enumerate the user's libraries:
+
 ```sql
-SELECT libraryID, name FROM libraries;
+SELECT libraryID, name FROM groups
 ```
 
-| libraryID | Name |
-|-----------|------|
-| 1 | Personal |
-| ...| (your group libraries here) |
+libraryID 1 is always the personal library. All others correspond to group libraries. At the start of a session, list the available libraries so the user can refer to them by name.
 
-## Three tiers of search
+## Four tiers of search
 
-Choose the right tier for the task.
+Choose the right tier for the task:
+
+```
+Exact author/year/title or specific Zotero collection?     → Tier 1
+A specific keyword/phrase across PDF text?                 → Tier 2
+Deep claim verification needing PDF read?                  → Tier 3
+Conceptual / paraphrased / "find similar" / "organise"?    → Tier 4
+```
+
+When in doubt, Tier 1 first to scope, then Tier 4 within scope.
 
 **Tier 1 — Metadata** (instant, whole library)
 Query `itemData`/`itemDataValues`/`creators` for title, author, abstract, journal,
 date, DOI, tags. Use for: finding papers by author/year, listing a collection,
 keyword searches in titles/abstracts.
 
-**Tier 2 — Full-text index** (fast, covers indexed PDFs)
+**Tier 2 — Full-text index** (fast, indexes all items with PDFs)
 Query `fulltextWords` + `fulltextItemWords` for keyword presence across PDFs without
 opening them. Good for "find papers that discuss [term]" across a large collection.
 Words are lower-cased and individual (not phrases). For phrase search, intersect
@@ -85,6 +89,54 @@ with pdfplumber.open(pdf_path) as pdf:
 ```
 
 Use `re.finditer` to locate specific passages rather than printing the entire text.
+
+## Tier 4 — Semantic (model-backed)
+
+Use when the query is conceptual or paraphrased — i.e. when keyword search would miss synonyms, acronyms, or rephrasings. Tier 4 calls `litmap search` or `litmap cluster` against the local embeddings database. The first call after a fresh model download or a long idle takes 10–30 seconds while the embedding model warms up; subsequent calls within the same session are sub-second.
+
+### Pattern 4a — Natural-language query → ranked papers
+
+```bash
+uv run --project ~/src/Cowork/litmap litmap search \
+  --query "biodiversity loss accelerating in tropics" \
+  --top-k 10 --format json
+```
+
+Returns JSON of the form:
+
+```json
+{
+  "query": "biodiversity loss accelerating in tropics",
+  "results": [
+    {"zotero_key": "AAAA0001", "title": "...", "authors": ["..."],
+     "year": "2022", "doi": "10.1/...", "similarity": 0.91, "abstract": "..."}
+  ]
+}
+```
+
+Summarise the top results with similarity scores. The `zotero_key` is portable — pass it to Tier 1/2/3 to open the PDF or fetch full metadata.
+
+### Pattern 4b — Paper-to-paper similarity
+
+```bash
+uv run --project ~/src/Cowork/litmap litmap search \
+  --paper "10.1126/science.1256014" --top-k 10 --format json
+```
+
+Same JSON shape as 4a; the focal paper is automatically excluded. Use for *"what else have I read that's like X?"*
+
+### Pattern 4c — Cluster a collection or library into themed groups
+
+```bash
+uv run --project ~/src/Cowork/litmap litmap cluster \
+  --collection "Chapter 2 refs" \
+  --output /tmp/litmap_clusters \
+  --format md
+```
+
+Read `/tmp/litmap_clusters.md` and present the outline inline. For visual exploration, mention that the `.html` dendrogram is also available via `--format all`.
+
+To cluster the entire library, omit `--collection`.
 
 ## Zotero 9 — New tables and fields
 
@@ -166,7 +218,7 @@ Classify each result by filename:
 - **Supplementary** — filename contains any of: `supplement`, `supporting`, `appendix`,
   `SI`, `S1`, `S2`, `ESM`, `Online Resource`, `Data S`, `Table S`, `Figure S`
 
-PDF path: `/path/to/Zotero/storage/<attachmentKey>/<filename>`
+PDF path: `<zotero_dir>/storage/<attachmentKey>/<filename>`
 where `<filename>` is the part of `ia.path` after `storage:`.
 
 **Always read supplementary files when they exist.** Information critical to a claim
@@ -320,11 +372,11 @@ GROUP BY i.itemID
 
 ## Scoping to a specific library or collection
 
-- **By library name:** map to libraryID using the table above, add `WHERE i.libraryID = N`
+- **By library name:** find the libraryID from the `groups` table, add `WHERE i.libraryID = N`
 - **By collection name:** find collectionID first, then join via `collectionItems`
-- **Excluding bulk collections:** if your personal library has large unsorted import
-  collections, exclude them by name when doing relevance searches unless the user
-  specifically wants them included
+- **Excluding bulk collections:** the personal library may have large unsorted collections
+  (e.g. `import`, `need_metadata`) — exclude these when doing relevance searches unless
+  the user specifically wants them included
 
 ## Notes
 
@@ -332,5 +384,23 @@ GROUP BY i.itemID
 - `pdfplumber` is available for PDF reading
 - For large PDFs, use `re.finditer` for keyword search rather than printing all text
 - Some collections share names across libraries — always check `libraryID`
+- Reference file counts are approximate; always query live for actual counts
 - `itemAnnotations` is the canonical source for annotation data in Zotero 9; prefer it
   over parsing annotation text from PDFs
+
+## Cross-tier integration rules
+
+- Tier 4 results carry `zotero_key`. Pass it straight to Tier 1 SQL (`WHERE i.key = ?`) for full metadata, or to Tier 3 for PDF reading.
+- When the user has specified a collection scope ("in collection X, find papers about Y"), pass `--collection "<name>"` to litmap.
+- When the user has specified a *library*, litmap cannot scope by library directly. Run Tier 4 unscoped, then filter results by checking each `zotero_key` against `libraryID` via a single Tier 1 SQL query.
+- Auto-sync runs before every litmap call. Mention the sync in the user response only if it added papers (>0 new embeddings).
+
+## Tier 4 errors and edge cases
+
+| Condition | Skill response |
+|---|---|
+| `litmap` command not found | "`litmap` is not installed. Run `uv pip install -e .` from `~/src/Cowork/litmap`." |
+| First-run model download | "First-run model download (~570 MB), this takes ~1 minute." |
+| `~/LitLake/embeddings.db` missing | "Embeddings database not found. Run `litmap sync` once to embed the library." |
+| Auto-sync took > 30s on incremental | Note: "Sync took longer than usual — if you've recently added many papers, this is expected." |
+| Top result similarity < 0.5 | "No strong semantic matches in your library. Consider rephrasing or broadening the query." |
