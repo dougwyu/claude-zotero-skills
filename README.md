@@ -92,7 +92,27 @@ What have I read most recently?
 ### Importing reading notes
 
 1. Write your notes in an outliner that can export HTML (e.g. [Bike](https://www.hogbaysoftware.com/bike/))
-2. Structure each paper entry with the author name in `<strong>` and the year in parentheses — e.g. **Smith** (2020)
+2. Structure each paper as a top-level entry whose heading is the full reference. The recommended format is **Methods in Ecology & Evolution (MEE)** style, which always includes a DOI — this is what the skill uses to detect paper entries reliably. A generic MEE reference looks like:
+
+   ```
+   Smith, J., Brown, A., & Lee, K. (2021). Title of the paper. Journal Name,
+   590, 261–264. https://doi.org/10.xxxx/xxxxx
+   ```
+
+   A complete note entry with child items and a personal annotation block:
+
+   ```
+   ▸ Smith, J., Brown, A., & Lee, K. (2021). Biodiversity loss in tropical forests.
+     Nature, 590, 261–264. https://doi.org/10.1038/s41586-021-00001-x
+       ▸ Main finding: forest loss accelerated 2000–2020
+       ▸ Methods: remote sensing + field surveys across 50 sites
+       ▸ JRS
+           ▸ Good comparison dataset for Chapter 3
+           ▸ Check whether their deforestation metric matches ours
+   ```
+
+   The skill identifies paper entries by looking for a four-digit year in parentheses and a DOI hyperlink (or italicised journal name) in the same line — author names do not need to be bold. The last name is extracted as the text before the first comma. Child items become the note body. Any child section whose heading matches your personal initials or annotation label (e.g. `JRS`) is stored separately as a personal annotation block, kept out of faithfulness verdicts during manuscript audit.
+
 3. Export to HTML and copy the file to your `~/Zotero/` folder
 4. Tell Claude:
 
@@ -139,28 +159,57 @@ cd ~/src/Cowork/litmap
 uv pip install -e .
 ```
 
-Then build the embeddings index for your library:
+Then build the embeddings index for your library. There are two indexing commands:
 
 ```bash
+# Embed abstracts and metadata (fast — minutes to an hour)
 litmap sync
+
+# Also embed full PDF text (slow — potentially many hours to several days)
+litmap sync-fulltext
 ```
 
-This embeds all items in your Zotero library into `~/LitLake/embeddings.db`. The first run downloads the embedding model (~570 MB) and may take several minutes depending on library size. Subsequent syncs are incremental.
+`litmap sync` indexes abstracts, titles, and metadata only, and is fast enough to run routinely. `litmap sync-fulltext` additionally reads and embeds the full text of every PDF in your library. Depending on your computer and the number of PDFs, this can take anywhere from a few hours to several days for a large library. The payoff is substantially better semantic search: queries match against the actual content of papers rather than just their abstracts, which is particularly valuable for finding relevant passages, detecting citation gaps, and manuscript auditing. Both commands write to `~/LitLake/embeddings.db`; subsequent runs are incremental and much faster.
+
+The first run of either command also downloads the embedding model (~570 MB).
+
+### What you can do with litmap
+
+**Find papers by concept, not just keyword.** Standard Zotero search matches exact words. litmap matches meaning, so a query like "how do species interactions shape community assembly" will surface papers that discuss coexistence, competition, and niche theory even if those exact words don't appear in the title.
+
+**Find papers similar to one you already have.** Give litmap a DOI and it returns the most conceptually similar papers in your library — useful for discovering related work you may have forgotten, or for building a citation cluster around a key paper.
+
+**Cluster a collection into themes.** litmap groups a collection (or your entire library) into thematic clusters and produces a labelled outline. This is useful when starting to write — it shows you which themes are well-represented and which are thin, and can serve as a first draft of a section outline.
+
+**Detect citation gaps in a manuscript.** The manuscript-audit skill uses litmap to find claims in your draft that lack citations, then searches your library semantically for papers that could support them. This catches gaps that keyword search would miss because the claim and the paper title use different vocabulary.
+
+**Find papers by paper (not by query).** If a colleague recommends a paper you don't have, you can ask "what in my library is most like X?" using the paper's DOI — without needing to read it first.
+
+**Visualise your library as a map.** `litmap map` produces a UMAP scatterplot of your papers with k-nearest-neighbour edges, coloured by semantic position — papers on similar topics cluster together. Output is an interactive Plotly HTML file you can pan and zoom in a browser, plus a publication-quality PNG/PDF at 300 DPI.
 
 ### Usage examples
 
 ```bash
-# Find papers similar to a query
+# Find papers by concept
 litmap search --query "biodiversity loss tropical forests" --top-k 10
 
 # Find papers similar to a given paper (by DOI)
 litmap search --paper "10.1126/science.1256014" --top-k 10
 
-# Cluster a collection into themes
+# Cluster a collection into themes (markdown outline)
 litmap cluster --collection "Chapter 2 refs" --output /tmp/clusters --format md
+
+# Cluster with an interactive HTML dendrogram as well
+litmap cluster --collection "Chapter 2 refs" --output /tmp/clusters --format all
+
+# Cluster the entire library
+litmap cluster --output /tmp/clusters --format md
+
+# Visualise the library as a UMAP map (interactive HTML + 300 DPI PNG/PDF)
+litmap map --output /tmp/litmap_map
 ```
 
-The skills call litmap automatically when you ask conceptual questions. You do not need to run it directly unless you want to rebuild the index (`litmap sync`) or explore outside of Claude.
+You can also drive litmap entirely through Claude — just ask conceptual questions and Claude will call litmap internally, so you rarely need to run it directly. The main reason to run it from the command line is to rebuild the index (`litmap sync` or `litmap sync-fulltext`) or to generate a cluster dendrogram you want to open in a browser.
 
 ---
 

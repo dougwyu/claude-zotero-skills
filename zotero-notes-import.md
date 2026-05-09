@@ -42,7 +42,16 @@ If B: direct the user to https://www.zotero.org/settings/keys. The API key needs
 
 Read the HTML file. Outliners like Bike export a nested `<ul>/<li>` structure where each `<li>` contains a `<p>` and optionally a child `<ul>`.
 
-Detect paper `<li>` elements by scanning **all `<li>` elements** recursively:
+Detect paper `<li>` elements by scanning **all `<li>` elements** recursively.
+
+The recommended reference style is **Methods in Ecology & Evolution (MEE)**, which always includes a DOI. A typical entry looks like:
+
+```
+Smith, J., Brown, A., & Lee, K. (2021). Title of the paper. Journal Name,
+590, 261–264. https://doi.org/10.xxxx/xxxxx
+```
+
+Detection relies on two signals that are always present in a well-formed MEE reference: a four-digit year in parentheses, and a DOI hyperlink (or an italicised journal name for references without a DOI). Author names need not be bold — the parser extracts the last name as the text before the first comma in the `<p>`.
 
 ```python
 import re
@@ -55,8 +64,6 @@ def is_paper_li(li):
     text = first_p.get_text()
     if not re.search(r'\(\d{4}\)', text):               # must have year in parens
         return False
-    if not first_p.find('strong'):                      # must have <strong> author
-        return False
     if not (first_p.find('a') or first_p.find('em')):  # must have DOI link or journal name
         return False
     return True
@@ -68,7 +75,7 @@ paper_lis = [li for li in soup.find_all('li') if is_paper_li(li)]
 ```
 
 From the first `<p>` of each paper `<li>`, extract:
-- **Last name**: text inside the first `<strong>` tag, stripping trailing commas/spaces.
+- **Last name**: text before the first comma in the `<p>`, stripped of leading whitespace. For multi-author entries this is the first author's last name.
 - **Year**: four-digit year in parentheses.
 
 The **child `<ul>`** of each paper `<li>` contains the note body. Identify the **personal annotation section** as any direct child `<li>` whose first `<p>` text matches a user-defined label (e.g. `^\s*NOTES` or any consistent heading the user uses). All other child `<li>` items are PDF-summary sections.
