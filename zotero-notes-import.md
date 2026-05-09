@@ -31,7 +31,7 @@ If B: direct the user to https://www.zotero.org/settings/keys. The API key needs
 
 ## Input
 
-- **Notes file**: an HTML outliner export (e.g. from Bike: File → Export → HTML). Ask the user to export and copy the file to their Zotero folder (`~/Zotero/`), then provide the filename.
+- **Notes file**: an HTML outliner export (e.g. from Bike: File → Save As… → HTML; hold the Option key when opening the File menu to expose the Save As command). Ask the user to export and copy the file to their Zotero folder (`~/Zotero/`), then provide the filename.
 - **Zotero database**: opened read-only for item matching and group ID lookup.
 
 ---

@@ -117,7 +117,7 @@ What have I read most recently?
 
    The skill identifies paper entries by looking for a four-digit year in parentheses and a DOI hyperlink (or italicised journal name) in the same line — author names do not need to be bold. The last name is extracted as the text before the first comma. Child items become the note body. Any child section whose heading matches your personal initials or annotation label (e.g. `JRS`) is stored separately as a personal annotation block, kept out of faithfulness verdicts during manuscript audit.
 
-3. Export to HTML and copy the file to your `~/Zotero/` folder
+3. Save as HTML (in Bike: hold Option when opening the File menu, then File → Save As… → HTML) and copy the file to your `~/Zotero/` folder
 4. Tell Claude:
 
 ```
