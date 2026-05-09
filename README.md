@@ -44,6 +44,10 @@ Place the skill files somewhere on your path and reference them in your `CLAUDE.
 /skill zotero-skill.md
 ```
 
+### 4. Install litmap (recommended)
+
+The `zotero-skill.md` and `manuscript-audit-skill.md` skills use **litmap** for semantic search, citation gap detection, and library visualisation. See the [Semantic search with litmap](#semantic-search-with-litmap) section below for setup instructions.
+
 ---
 
 ## Customisation
