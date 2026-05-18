@@ -13,10 +13,11 @@ description: "Use this skill whenever the user wants to query, search, or explor
 **PDFs:** `<zotero_dir>/storage/<itemKey>/<filename>.pdf`
 **Reference file:** `<zotero_dir>/cowork-zotero-reference.md`
 
-Read the reference file at the start of every session — it contains the schema,
-field IDs, and query patterns so you don't need to rediscover them.
-**Trust the reference file for schema and IDs. Always run live queries for counts
-and collection listings — the reference file counts go stale.**
+Read the reference file at the start of every session — it holds
+environment-specific facts (this machine's libraries, connection quirks,
+the installed Zotero version's field-ID values). **Always run live queries
+for counts, collection listings, and field IDs — do not trust hardcoded
+numbers anywhere, including in this skill.**
 
 ```python
 import sqlite3, glob, os
@@ -29,10 +30,36 @@ else:
     db_path = os.path.expanduser('~/Zotero/zotero.sqlite')
 zotero_dir = os.path.dirname(db_path)
 
-conn = sqlite3.connect(db_path)
+# Zotero holds a write lock while running. `mode=ro` fails with
+# "database is locked"; `immutable=1` reads a consistent read-only
+# snapshot even with the app open. Never attempt writes.
+conn = sqlite3.connect(f"file:{db_path}?immutable=1", uri=True)
+cur = conn.cursor()
+
+# Field IDs are NOT stable across Zotero major versions (Zotero 9
+# remapped every one). Always resolve them by name at runtime:
+fids = dict(cur.execute("SELECT fieldName, fieldID FROM fields").fetchall())
+# e.g. fids['title'], fids['abstractNote'], fids['date'],
+#      fids['publicationTitle'], fids['url'], fids['DOI']
 ```
 
+Build every metadata query with `fids[...]`, never a literal `fieldID = N`.
+The SQL examples below use placeholders like `{title}` to mean
+`fids['title']` — substitute the resolved integer (e.g. via f-string)
+before executing. `date` values are stored as `"YYYY-MM-DD …"`; use
+`substr(value,1,4)` for the year.
+
 **Always query across all libraries unless the user specifies otherwise.**
+
+**Always exclude trashed items.** Items the user deleted sit in Zotero's
+Trash (table `deletedItems`) and remain in `items` until the trash is
+emptied — so a deduped/removed paper still appears in raw queries. Append
+this to every metadata/full-text search unless the user explicitly asks to
+include trash:
+
+```sql
+AND i.itemID NOT IN (SELECT itemID FROM deletedItems)
+```
 
 ## Libraries
 
@@ -73,22 +100,52 @@ SELECT i.itemID, i.libraryID, tv.value AS title
 FROM fulltextWords fw
 JOIN fulltextItemWords fiw ON fw.wordID = fiw.wordID
 JOIN items i ON fiw.itemID = i.itemID
-JOIN itemData td ON i.itemID = td.itemID AND td.fieldID = 1
+JOIN itemData td ON i.itemID = td.itemID AND td.fieldID = {title}
 JOIN itemDataValues tv ON td.valueID = tv.valueID
 WHERE fw.word = 'keyword'
+  AND i.itemID NOT IN (SELECT itemID FROM deletedItems)
 ```
 
 **Tier 3 — PDF reading** (slower, for deep analysis)
-Open PDFs directly with `pdfplumber` when you need to verify a specific claim,
-extract a quote, or check citation faithfulness.
+Open PDFs when you need to verify a specific claim, extract a quote, or check
+citation faithfulness.
+
+Pick the tool by *what you need to do with the content*:
+
+**1. Text only** (claims, quotes, statistics) → **`pdftotext`** — fast, no
+page limit, no dependency:
+
+```python
+import subprocess
+text = subprocess.run(["pdftotext", "-q", pdf_path, "-"],
+                       capture_output=True, text=True).stdout
+```
+
+**2. Understand/interpret a figure, chart, or plot** → **the Read tool with
+the `pages` parameter**, not pdfplumber. Only the Read tool can actually see
+and interpret a figure (axes, trends, legend, values); pdfplumber merely
+returns pixels/coordinates. It is also more efficient — one step, no
+render→save→re-read detour. Respect the ~20-pages-per-request cap; for a
+large PDF pass a tight page range. (Consistent with the global CLAUDE.md
+rule: visual content → Read tool.)
+
+**3. pdfplumber — supporting role only.** Use it to (a) extract the exact
+data **table** behind a figure when the numbers exist as vector text, or
+(b) **crop a single panel's bounding box** on a busy multi-panel page so the
+Read tool gets a clean, tightly-scoped image. Also the fallback when
+`pdftotext` yields empty output (scanned PDF). Installed globally:
 
 ```python
 import pdfplumber
 with pdfplumber.open(pdf_path) as pdf:
-    text = ''.join(page.extract_text() or '' for page in pdf.pages)
+    page   = pdf.pages[n]
+    tables = page.extract_tables()                  # data behind a figure
+    images = page.images                            # locate figure bboxes
+    page.crop(bbox).to_image(resolution=200).save(out_png)  # isolate a panel
 ```
 
-Use `re.finditer` to locate specific passages rather than printing the entire text.
+Use `re.finditer` to locate specific passages rather than printing the entire
+text. Always read SI attachments too when they exist (see PDF-path section).
 
 ## Tier 4 — Semantic (model-backed)
 
@@ -166,7 +223,7 @@ SELECT ia.lastRead, i.key, idv.value AS title, ia.path
 FROM itemAttachments ia
 JOIN items i ON ia.itemID = i.itemID
 JOIN items parent ON ia.parentItemID = parent.itemID
-JOIN itemData id_t ON parent.itemID = id_t.itemID AND id_t.fieldID = 1
+JOIN itemData id_t ON parent.itemID = id_t.itemID AND id_t.fieldID = {title}
 JOIN itemDataValues idv ON id_t.valueID = idv.valueID
 WHERE ia.lastRead IS NOT NULL
 ORDER BY ia.lastRead DESC
@@ -210,8 +267,14 @@ JOIN items i ON ia.itemID = i.itemID
 WHERE ia.parentItemID = ?
   AND ia.path IS NOT NULL
   AND ia.path != ''
-ORDER BY ia.orderIndex
+ORDER BY ia.itemID
 ```
+
+> ⚠️ Zotero 9 **removed `itemAttachments.orderIndex`** (no replacement
+> ordering column exists). Do not `ORDER BY ia.orderIndex` — it throws
+> `no such column`. `ORDER BY ia.itemID` approximates insertion order
+> (main PDF is normally added first); never rely on attachment order for
+> correctness — classify main-vs-SI by the filename heuristic below.
 
 Classify each result by filename:
 - **Main article** — the primary PDF (usually matches the paper title or author-year)
@@ -239,13 +302,14 @@ SELECT DISTINCT i.itemID, i.key, i.libraryID,
 FROM items i
 JOIN itemCreators ic ON i.itemID = ic.itemID AND ic.orderIndex = 0
 JOIN creators c ON ic.creatorID = c.creatorID
-JOIN itemData td ON i.itemID = td.itemID AND td.fieldID = 1
+JOIN itemData td ON i.itemID = td.itemID AND td.fieldID = {title}
 JOIN itemDataValues tv ON td.valueID = tv.valueID
-LEFT JOIN itemData dd ON i.itemID = dd.itemID AND dd.fieldID = 6
+LEFT JOIN itemData dd ON i.itemID = dd.itemID AND dd.fieldID = {date}
 LEFT JOIN itemDataValues dv ON dd.valueID = dv.valueID
-LEFT JOIN itemData jd ON i.itemID = jd.itemID AND jd.fieldID = 37
+LEFT JOIN itemData jd ON i.itemID = jd.itemID AND jd.fieldID = {publicationTitle}
 LEFT JOIN itemDataValues jv ON jd.valueID = jv.valueID
 WHERE c.lastName LIKE '%LastName%' AND dv.value LIKE '%YEAR%'
+  AND i.itemID NOT IN (SELECT itemID FROM deletedItems)
 GROUP BY i.itemID
 ```
 
@@ -257,17 +321,18 @@ SELECT DISTINCT i.itemID, i.key,
        GROUP_CONCAT(c.lastName || ', ' || c.firstName, '; ') AS authors
 FROM collectionItems ci
 JOIN items i ON ci.itemID = i.itemID
-JOIN itemData td ON i.itemID = td.itemID AND td.fieldID = 1
+JOIN itemData td ON i.itemID = td.itemID AND td.fieldID = {title}
 JOIN itemDataValues tv ON td.valueID = tv.valueID
-LEFT JOIN itemData dd ON i.itemID = dd.itemID AND dd.fieldID = 6
+LEFT JOIN itemData dd ON i.itemID = dd.itemID AND dd.fieldID = {date}
 LEFT JOIN itemDataValues dv ON dd.valueID = dv.valueID
-LEFT JOIN itemData jd ON i.itemID = jd.itemID AND jd.fieldID = 37
+LEFT JOIN itemData jd ON i.itemID = jd.itemID AND jd.fieldID = {publicationTitle}
 LEFT JOIN itemDataValues jv ON jd.valueID = jv.valueID
-LEFT JOIN itemData ad ON i.itemID = ad.itemID AND ad.fieldID = 2
+LEFT JOIN itemData ad ON i.itemID = ad.itemID AND ad.fieldID = {abstractNote}
 LEFT JOIN itemDataValues av ON ad.valueID = av.valueID
 LEFT JOIN itemCreators ic ON i.itemID = ic.itemID AND ic.orderIndex = 0
 LEFT JOIN creators c ON ic.creatorID = c.creatorID
 WHERE ci.collectionID = ?
+  AND i.itemID NOT IN (SELECT itemID FROM deletedItems)
 GROUP BY i.itemID ORDER BY dv.value DESC
 ```
 
@@ -287,18 +352,23 @@ or query both and note the distinction in your output.
 ```sql
 SELECT v.value FROM itemData d
 JOIN itemDataValues v ON d.valueID = v.valueID
-WHERE d.itemID = ? AND d.fieldID = 2
+WHERE d.itemID = ? AND d.fieldID = {abstractNote}
 ```
 
-## Key field IDs
-| fieldName | fieldID |
-|-----------|---------|
-| title | 1 |
-| abstractNote | 2 |
-| date | 6 |
-| url | 13 |
-| publicationTitle | 37 |
-| DOI | 58 |
+## Field IDs — resolve at runtime, never hardcode
+
+Zotero's numeric `fieldID`s are an internal detail and **change across major
+versions** (Zotero 9 remapped all of them). Do not memorise or hardcode them.
+Build the lookup once per session and reference it by name:
+
+```python
+fids = dict(cur.execute("SELECT fieldName, fieldID FROM fields").fetchall())
+```
+
+The `{title}`, `{date}`, `{abstractNote}`, `{publicationTitle}`, `{url}`,
+`{DOI}` placeholders in the SQL examples above all mean `fids['<name>']`.
+The reference file records the *current* installed version's values for
+quick human reference only — the query path must still resolve live.
 
 ---
 
@@ -360,11 +430,12 @@ SELECT i.itemID, i.libraryID, tv.value AS title, dv.value AS date
 FROM items i
 JOIN itemCreators ic ON i.itemID = ic.itemID AND ic.orderIndex = 0
 JOIN creators c ON ic.creatorID = c.creatorID
-JOIN itemData td ON i.itemID = td.itemID AND td.fieldID = 1
+JOIN itemData td ON i.itemID = td.itemID AND td.fieldID = {title}
 JOIN itemDataValues tv ON td.valueID = tv.valueID
-LEFT JOIN itemData dd ON i.itemID = dd.itemID AND dd.fieldID = 6
+LEFT JOIN itemData dd ON i.itemID = dd.itemID AND dd.fieldID = {date}
 LEFT JOIN itemDataValues dv ON dd.valueID = dv.valueID
 WHERE c.lastName LIKE '%LastName%'
+  AND i.itemID NOT IN (SELECT itemID FROM deletedItems)
 GROUP BY i.itemID
 ```
 
@@ -381,7 +452,9 @@ GROUP BY i.itemID
 ## Notes
 
 - The SQLite database is read-only — never attempt writes
-- `pdfplumber` is available for PDF reading
+- PDF reading: `pdftotext` for text-only; **Read tool (`pages`) to interpret
+  figures/charts**; `pdfplumber` only to extract figure data-tables or crop a
+  panel, and as scanned-PDF fallback — pdftotext/pdfplumber installed globally
 - For large PDFs, use `re.finditer` for keyword search rather than printing all text
 - Some collections share names across libraries — always check `libraryID`
 - Reference file counts are approximate; always query live for actual counts
