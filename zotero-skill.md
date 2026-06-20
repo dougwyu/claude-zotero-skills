@@ -39,6 +39,7 @@ zotero_dir = os.path.dirname(db_path)
 # to /tmp, or via sqlite3 `.backup()`): the file is routinely >1 GB, so
 # a copy is slow, wasteful, and unnecessary. Read the live file in place.
 conn = sqlite3.connect(f"file:{db_path}?immutable=1", uri=True)
+# Caveat: `immutable=1` ignores the -wal file, so edits just made in the open Zotero app may not appear until Zotero checkpoints the WAL (e.g. on idle or close).
 cur = conn.cursor()
 
 # Field IDs are NOT stable across Zotero major versions (Zotero 9
@@ -178,6 +179,12 @@ Returns JSON of the form:
 
 Summarise the top results with similarity scores. The `zotero_key` is portable — pass it to Tier 1/2/3 to open the PDF or fetch full metadata.
 
+> ⚠️ **`authors` is NOT in authorship order** — never use it for citations or
+> first-author attribution (it has surfaced a *last/senior* author as if first).
+> Treat litmap output as authoritative only for `zotero_key` and `similarity`;
+> resolve authors from the Zotero record by key (see *Resolving authors from a
+> litmap result*, below).
+
 ### Pattern 4b — Paper-to-paper similarity
 
 ```bash
@@ -199,6 +206,38 @@ uv run --project ~/src/Cowork/litmap litmap cluster \
 Read `/tmp/litmap_clusters.md` and present the outline inline. For visual exploration, mention that the `.html` dendrogram is also available via `--format all`.
 
 To cluster the entire library, omit `--collection`.
+
+### Resolving authors from a litmap result
+
+litmap's `authors` array is **not** authorship-ordered, so never cite from it.
+Trust litmap only for `zotero_key` and `similarity`; resolve authors (and any
+other citation field) from the Zotero record by key, ordered by `orderIndex`:
+
+```python
+def authors_for_key(conn, key):
+    """Authors in correct authorship order for a Zotero item key.
+    litmap's `authors` field is NOT order-preserving — always use this.
+    Resolves to the parent item if `key` points to an attachment."""
+    row = conn.execute("SELECT itemID FROM items WHERE key=?", (key,)).fetchone()
+    if not row:
+        return []
+    item_id = row[0]
+    parent = conn.execute(
+        "SELECT parentItemID FROM itemAttachments "
+        "WHERE itemID=? AND parentItemID IS NOT NULL", (item_id,)).fetchone()
+    if parent:
+        item_id = parent[0]
+    return conn.execute("""
+        SELECT cr.lastName, cr.firstName
+        FROM itemCreators ic
+        JOIN creators cr ON ic.creatorID = cr.creatorID
+        JOIN creatorTypes ct ON ic.creatorTypeID = ct.creatorTypeID
+        WHERE ic.itemID = ? AND ct.creatorType = 'author'
+        ORDER BY ic.orderIndex
+    """, (item_id,)).fetchall()
+# First author = authors_for_key(conn, key)[0]   (orderIndex 0)
+# Empty list = item has only editors; fall back to creatorType='editor'.
+```
 
 ## Zotero 9 — New tables and fields
 
@@ -471,6 +510,7 @@ GROUP BY i.itemID
 ## Cross-tier integration rules
 
 - Tier 4 results carry `zotero_key`. Pass it straight to Tier 1 SQL (`WHERE i.key = ?`) for full metadata, or to Tier 3 for PDF reading.
+- litmap output is authoritative **only** for `zotero_key` and `similarity`. Any field that will appear in a citation — authors and first author above all — must be resolved from the Zotero record via the key (use `authors_for_key`), never read from litmap's JSON.
 - When the user has specified a collection scope ("in collection X, find papers about Y"), pass `--collection "<name>"` to litmap.
 - When the user has specified a *library*, litmap cannot scope by library directly. Run Tier 4 unscoped, then filter results by checking each `zotero_key` against `libraryID` via a single Tier 1 SQL query.
 - Auto-sync runs before every litmap call. Mention the sync in the user response only if it added papers (>0 new embeddings).
