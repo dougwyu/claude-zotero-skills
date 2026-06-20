@@ -33,6 +33,11 @@ zotero_dir = os.path.dirname(db_path)
 # Zotero holds a write lock while running. `mode=ro` fails with
 # "database is locked"; `immutable=1` reads a consistent read-only
 # snapshot even with the app open. Never attempt writes.
+#
+# If you hit "database is locked", the fix is `immutable=1` below — NOT
+# copying the database. Never duplicate or snapshot zotero.sqlite (e.g.
+# to /tmp, or via sqlite3 `.backup()`): the file is routinely >1 GB, so
+# a copy is slow, wasteful, and unnecessary. Read the live file in place.
 conn = sqlite3.connect(f"file:{db_path}?immutable=1", uri=True)
 cur = conn.cursor()
 
@@ -451,7 +456,9 @@ GROUP BY i.itemID
 
 ## Notes
 
-- The SQLite database is read-only — never attempt writes
+- The SQLite database is read-only — never attempt writes, and never copy or
+  snapshot it (it is often >1 GB); read the live file in place with `immutable=1`
+  (see Setup). A "database is locked" error means use `immutable=1`, not duplicate the file
 - PDF reading: `pdftotext` for text-only; **Read tool (`pages`) to interpret
   figures/charts**; `pdfplumber` only to extract figure data-tables or crop a
   panel, and as scanned-PDF fallback — pdftotext/pdfplumber installed globally
