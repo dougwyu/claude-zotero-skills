@@ -6,7 +6,7 @@ Three Claude skills that turn [Claude Code](https://www.anthropic.com/claude-cod
 |---|---|
 | `zotero-skill.md` | Query your Zotero SQLite database — search by author/year/keyword, list collections, find relevant citations, verify citation faithfulness, surface annotations and recently-read items (Zotero 9+) |
 | `zotero-notes-import.md` | Import structured HTML reading notes from an outliner (e.g. [Bike](https://www.hogbaysoftware.com/bike/)) into Zotero as item notes, matched to items by author + year |
-| `manuscript-audit-skill.md` | Four-pass manuscript audit: citation faithfulness check, citation gap detection, logical consistency review, and copyediting |
+| `manuscript-audit-skill.md` | Four-pass manuscript audit: citation faithfulness check, citation gap detection, logical consistency review (a bit experimental), and copyediting |
 
 ---
 
