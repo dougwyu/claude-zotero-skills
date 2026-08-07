@@ -1,6 +1,6 @@
 ---
 name: manuscript-audit
-description: "Audit and polish scientific manuscripts for journal submission. Use this skill whenever the user has a manuscript draft (docx, pdf, or pasted text) for peer review. The skill performs four passes: (1) extracts all author-year citations and verifies claims against original PDFs in the user's Zotero library to ensure faithfulness, consulting the manuscript's reference list to disambiguate author-year citations; (2) identifies unsupported or weakly supported claims and suggests additional citations via semantic search of the library; (3) checks for logical inconsistencies, contradictions, and reasoning gaps within the manuscript; (4) copyedits for grammar, style, punctuation, flow, and journal conventions. Trigger on phrases like 'audit my manuscript,' 'review my citations,' 'fact-check my claims,' 'check my paper,' or 'prepare for submission.'. (Claude Code only — uses litmap for semantic citation-gap detection.)"
+description: "Audit and polish scientific manuscripts for journal submission. Use this skill whenever the user has a manuscript draft (docx, pdf, or pasted text) for peer review. The skill performs four passes: (1) extracts all author-year citations and verifies claims against original PDFs in the user's Zotero library to ensure faithfulness, consulting the manuscript's reference list to disambiguate author-year citations; (2) identifies unsupported or weakly supported claims and suggests additional citations via semantic search of the library; (3) checks for logical inconsistencies, contradictions, and reasoning gaps within the manuscript (a bit experimental); (4) copyedits for grammar, style, punctuation, flow, and journal conventions. Trigger on phrases like 'audit my manuscript,' 'review my citations,' 'fact-check my claims,' 'check my paper,' or 'prepare for submission.'. (Claude Code only — uses litmap for semantic citation-gap detection.)"
 compatibility: "Claude Code only. Requires zotero skill, pdf-reading skill, file-reading skill (if manuscript uploaded as file), and a working `uv run litmap` install at ~/src/Cowork/litmap."
 ---
 
@@ -395,6 +395,8 @@ A benchmark study"
 ---
 
 ## Stage 3: Logical Consistency Check
+
+> **Note:** This pass is a bit experimental — contradiction and reasoning-gap detection relies on the model's own judgment rather than a verifiable source lookup (unlike Stages 1–2), so treat its findings as suggestions to sanity-check rather than definitive verdicts.
 
 ### Input
 - The manuscript (full text)

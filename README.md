@@ -1,6 +1,6 @@
 # claude-zotero-skills
 
-Three Claude skills that turn Claude (via the [Cowork](https://www.anthropic.com/claude) desktop app or [Claude Code](https://www.anthropic.com/claude-code)) into a research assistant that works directly with your Zotero library.
+Three Claude skills that turn [Claude Code](https://www.anthropic.com/claude-code) into a research assistant that works directly with your Zotero library. `zotero-skill.md` and `manuscript-audit-skill.md` depend on litmap for semantic search, which runs `uv run litmap …` on the local machine — these skills work in Claude Code only, not the Cowork web sandbox.
 
 | Skill file | What it does |
 |---|---|
@@ -28,15 +28,7 @@ git clone https://github.com/dougwyu/claude-zotero-skills.git
 
 Or download the three `.md` files directly.
 
-### 2. Load into Cowork
-
-In the Cowork desktop app:
-
-1. Open **Settings → Skills**
-2. Click **Add skill** and point it at each `.md` file
-3. Give Cowork access to your Zotero directory (the folder containing `zotero.sqlite` and the `storage/` subfolder)
-
-### 3. Load into Claude Code
+### 2. Load into Claude Code
 
 Place the skill files somewhere on your path and reference them in your `CLAUDE.md`, or load them manually at the start of a session:
 
@@ -44,7 +36,7 @@ Place the skill files somewhere on your path and reference them in your `CLAUDE.
 /skill zotero-skill.md
 ```
 
-### 4. Install litmap (recommended)
+### 3. Install litmap (recommended)
 
 The `zotero-skill.md` and `manuscript-audit-skill.md` skills use **litmap** for semantic search, citation gap detection, and library visualisation. See the [Semantic search with litmap](#semantic-search-with-litmap) section below for setup instructions.
 
@@ -144,7 +136,7 @@ Claude runs four passes in sequence:
 
 1. **Citation faithfulness** — opens each cited PDF and checks whether the claim attributed to it is actually supported
 2. **Citation gaps** — finds unsupported claims and suggests papers from your library that could fill them
-3. **Logical consistency** — checks for contradictions, reasoning gaps, and scope creep
+3. **Logical consistency** (a bit experimental) — checks for contradictions, reasoning gaps, and scope creep
 4. **Copyediting** — grammar, clarity, flow, and style
 
 Expect 10–20 minutes for an 8,000-word manuscript.
@@ -222,7 +214,7 @@ You can also drive litmap entirely through Claude — just ask conceptual questi
 ## Requirements
 
 - [Zotero](https://www.zotero.org/) 6 or 9 (Zotero 9 adds annotation and "Added By" support)
-- [Claude Code](https://www.anthropic.com/claude-code) or [Cowork](https://www.anthropic.com/claude) desktop app
+- [Claude Code](https://www.anthropic.com/claude-code) — `zotero-skill.md` and `manuscript-audit-skill.md` call litmap via `uv run`, which the Cowork web sandbox doesn't support
 - Python 3.11+ with [uv](https://github.com/astral-sh/uv) (for the notes-import script and litmap)
 - `requests` and `beautifulsoup4` (installed automatically by the notes-import script via `uv`)
 - `pdfplumber` (used by `zotero-skill.md` for PDF reading — install globally with `pip install pdfplumber` or `uv tool install pdfplumber`)
